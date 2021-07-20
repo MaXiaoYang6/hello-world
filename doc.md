@@ -1034,3 +1034,750 @@ msgget()函数的第一个参数是消息队列对象的关键字(key)，函数�
 和IPC_CREAT 一起使用（用”|”连接），如果消息对象不存在则创建之，否则产生一个错误并返回。
 如果单独使用IPC_CREAT 标志，msgget()函数要么返回一个已经存在的消息队列对象的标识符，要么返回一个新建立的消息队列对象的标识符。如果将IPC_CREAT 和IPC_EXCL标志一起使用，msgget()将返回一个新建的消息对象的标识符，或者返回-1 如果消息队列对象已存在。IPC_EXCL 标志本身并没有太大的意义，但和IPC_CREAT 标志一起使用可以用来保证所得的消息队列对象是新创建的而不是打开的已有的对象。
 除了以上的两个标志以外，在msgflg 标志中还可以有存取权限控制符。这种控制符的意义和文件系统中的权限控制符是类似的。
+
+### 9.3.11 __NR_msgctl
+
+通过msgctl()函数，我们可以直接控制消息队列的行为。它在系统库lmsg.h 中的
+定义是这样的：
+系统调用： msgctl()
+函数声明： int msgctl ( int msgqid, int cmd, struct msqid_ds *buf )
+返回值： 0 on success
+-1 on error: errno = EACCES (No read permission and cmd is IPC_STAT)
+EFAULT (Address pointed to by buf is invalid with
+IPC_SET and IPC_STAT commands)
+EIDRM (Queue was removed during retrieval)
+EINVAL (msgqid invalid, or msgsz less than 0)
+EPERM (IPC_SET or IPC_RMID command was
+issued, but calling process does not have
+write (alter) access to the queue)
+
+函数参数详解：
+
+第一个参数msgqid 是消息队列对象的标识符。
+第二个参数是函数要对消息队列进行的操作，它可以是：
+**IPC_STAT**：取出系统保存的消息队列的msqid_ds 数据，并将其存入参数buf 指向的msqid_ds 结构中。
+**IPC_SET**：设定消息队列的msqid_ds 数据中的msg_perm 成员。设定的值由buf 指向的msqid_ds结构给出。
+**IPC_EMID**：将队列从系统内核中删除。
+这三个命令的功能都是明显的，所以就不多解释了。唯一需要强调的是在IPC_STAT命令中队列的msqid_ds 数据中唯一能被设定的只msg_perm 成员，其是ipc_perm 类型的数据。而ipc_perm 中能被修改的只有mode,pid 和uid 成员。其他的都是只能由系统来设定的。最后我们将使用msgctl()函数来开发几个封装函数作为本节的例子：
+IPC_STAT 的例子：
+```c
+int get_queue_ds( int qid, struct msgqid_ds *qbuf )
+{
+if( msgctl( qid, IPC_STAT, qbuf) == -1)
+{
+return(-1);
+}
+return(0);
+}
+```
+IPC_SET 的例子：
+```c
+int change_queue_mode( int qid, char *mode )
+{
+struct msqid_ds tmpbuf;
+/* Retrieve a current copy of the internal data structure */
+get_queue_ds( qid, &tmpbuf);
+/* Change the permissions using an old trick */
+sscanf(mode, "%ho", &tmpbuf.msg_perm.mode);
+/* Update the internal data structure */
+if( msgctl( qid, IPC_SET, &tmpbuf) == -1)
+{
+return(-1);
+}
+return(0);
+}
+IPC_RMID 的例子：
+int remove_queue( int qid )
+{
+if( msgctl( qid, IPC_RMID, 0) == -1)
+{
+return(-1);
+}
+return(0);
+}
+```
+
+### 9.3.12  __NR_semget
+semget，是获取与某个键关联的信号量集标识。
+
+函数原型：
+```c
+int semget(key_t key,int nsems,int semflg);
+```
+功能描述
+。信号量集被建立的情况有两种：
+1.如果键的值是IPC_PRIVATE。
+2.或者键的值不是IPC_PRIVATE，并且键所对应的信号量集不存在，同时标志中指定IPC_CREAT。
+当调用semget创建一个信号量时，他的相应的semid_ds结构被初始化。ipc_perm中各个量被设置为相应
+值：
+sem_nsems被设置为nsems所示的值；
+sem_otime被设置为0；
+sem_ctime被设置为当前时间
+```c
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+int semget(key_t key, int nsems, int semflg);
+```
+**key**：所创建或打开信号量集的键值。
+**nsems**：创建的信号量集中的信号量的个数，该参数只在创建信号量集时有效。
+**semflg**：调用函数的操作类型，也可用于设置信号量集的访问权限，两者通过or表示
+返回值说明：
+如果成功，则返回信号量集的IPC标识符。
+如果失败，则返回-1，errno被设定成以下的某个值
+**EACCES**：没有访问该信号量集的权限
+**EEXIST**：信号量集已经存在，无法创建
+**EINVAL**：参数nsems的值小于0或者大于该信号量集的限制；或者是该key关联的信号量集已存在，并且nsems
+大于该信号量集的信号量数
+**ENOENT**：信号量集不存在，同时没有使用IPC_CREAT
+**ENOMEM** ：没有足够的内存创建新的信号量集
+**ENOSPC**：超出系统限制
+
+### 9.3.13 __NR_semctl
+
+系统调用semctl用来执行在信号量集上的控制操作。这和在消息队列中的系统调用msgctl是十分相似的。但这两个系统调用的参数略有不同。
+
+semctl()系统调用：semctl();
+原型：
+```c
+int semctl(int semid,int semnum,int cmd, /*union semun arg*/);
+```
+返回值：如果成功，则为一个正数。
+如果失败，则为-1：errno=**EACCES**(权限不够)
+**EFAULT**(arg指向的地址无效)
+**EIDRM**(信号量集已经删除)
+**EINVAL**(信号量集不存在，或者semid无效)
+**EPERM**(EUID没有cmd的权利)
+**ERANGE**(信号量值超出范围)
+因为信号量一般是作为一个信号量集使用的，而不是一个单独的信号量。所以在信号量集的操作中，不但要知道IPC关键字值，也要知道信号量集中的具体的信号量。这两个系统调用都使用了参数cmd，它用来指出要操作的具体命令。两个系统调用中的最后一个参数也不一样。在系统调用msgctl中，最后一个参数是指向内核中使用的数据结构的指针。我们使用此数据结构来取得有关消息队列的一些信息，以及设置或者改变队列的存取权限和使用者。但在信号量中支持额外的可选的命令，这样就要求有一个更为复杂的数据结构。
+系统调用semctl()的第一个参数是信号量集IPC标识符。第二个参数是操作信号在信号集中的编号，第一个信号的编号是0。
+参数cmd中可以使用的命令如下：
+·**IPC_STAT**读取一个信号量集的数据结构semid_ds，并将其存储在semun中的buf参数中。
+·**IPC_SET**设置信号量集的数据结构semid_ds中的元素ipc_perm，其值取自semun中的buf参数。
+·**IPC_RMID**将信号量集从内存中删除。
+·**GETALL**用于读取信号量集中的所有信号量的值。
+·**GETNCNT**返回正在等待资源的进程数目。
+·**GETPID**返回最后一个执行semop操作的进程的PID。
+·**GETVAL**返回信号量集中的一个单个的信号量的值。
+·**GETZCNT**返回正在等待完全空闲的资源的进程数目。
+·**SETALL**设置信号量集中的所有的信号量的值。
+·**SETVAL**设置信号量集中的一个单独的信号量的值。
+参数arg代表一个semun的实例。semun是在linux/sem.h中定义的：
+```c
+/*arg for semctl systemcalls.*/
+union semun{
+int val;/*value for SETVAL*/
+struct semid_ds *buf;/*buffer for IPC_STAT&IPC_SET*/
+ushort *array;/*array for GETALL&SETALL*/
+struct seminfo *__buf;/*buffer for IPC_INFO*/
+void *__pad;
+```
+val当执行SETVAL命令时使用。buf在IPC_STAT/IPC_SET命令中使用。代表了内核中使用的信号量的数据结构。array在使用GETALL/SETALL命令时使用的指针。
+下面的程序返回信号量的值。当使用GETVAL命令时，调用中的最后一个参数被忽略：
+```c
+intget_sem_val(intsid,intsemnum)
+{
+return(semctl(sid,semnum,GETVAL,0));
+}
+```
+下面是一个实际应用的例子：
+```c
+#defineMAX_PRINTERS5
+printer_usage()
+{
+int x;
+for(x=0;x<MAX_PRINTERS;x++)
+printf("Printer%d:%d\n\r",x,get_sem_val(sid,x));
+}
+下面的程序可以用来初始化一个新的信号量值：
+void init_semaphore(int sid,int semnum,int initval)
+{
+union semun semopts;
+semopts.val=initval;
+semctl(sid,semnum,SETVAL,semopts);
+}
+```
+注意系统调用semctl中的最后一个参数是一个联合类型的副本，而不是一个指向联合类型的指针。
+需要注意的是，对于semun联合体，最好自己定义，否则GCC编译器可能会报“semun大小未知”。
+
+### 9.3.13 __NR_semctl
+
+信号量的值与相应资源的使用情况有关，当它的值大于 0 时，表示当前可用的资源数的数量；当它的值小于 0 时，其绝对值表示等待使用该资源的进程个数。信号量的值仅能由 PV 操作来改变。
+
+PV 操作通过调用semop函数来实现。该函数定义在头文件 sys/sem.h中，原型如下：
+int semop（int semid，struct sembuf *sops，size_t nsops）；
+
+#### 功能描述
+操作一个或一组信号。
+####用法
+```c
+#include <sys/types.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+int semop(int semid, struct sembuf *sops, unsigned nsops);
+int semtimedop(int semid, struct sembuf *sops, unsigned nsops, struct timespec *timeout);
+```
+#### 参数
+**semid**：信号集的识别码，可通过semget获取。
+**sops**：指向存储信号操作结构的数组指针，信号操作结构的原型如下
+```c
+struct sembuf
+{
+unsigned short sem_num; /* semaphore number */
+short sem_op; /* semaphore operation */
+short sem_flg; /* operation flags */
+};
+```
+这三个字段的意义分别为：
+**sem_num**：操作信号在信号集中的编号，第一个信号的编号是0。
+**sem_op**：如果其值为正数，该值会加到现有的信号内含值中。通常用于释放所控资源的使用权；如果sem_op的值为负数，而其绝对值又大于信号的现值，操作将会阻塞，直到信号值大于或等于sem_op的绝对值。通常用于获取资源的使用权；如果sem_op的值为0，如果没有设置IPC_NOWAIT，则调用该操作的进程或者线程将暂时睡眠，直到信号量的值为0；否则，进程或者线程不会睡眠，函数返回错误EAGAIN。
+**sem_flg**：信号操作标志，可能的选择有两种
+**IPC_NOWAIT** //对信号的操作不能满足时，semop()不会阻塞，并立即返回，同时设定错误信息。
+**SEM_UNDO**//程序结束时(不论正常或不正常)，保证信号值会被重设为semop()调用前的值。这样做的目的在于避免程序在异常情况下结束时未将锁定的资源解锁，造成该资源永远锁定。
+**nsops**：信号操作结构的数量，恒大于或等于1。
+**timeout**：当semtimedop()调用致使进程进入睡眠时，睡眠时间不能超过本参数指定的值。如果睡眠超时，semtimedop()将失败返回，并设定错误值为EAGAIN。如果本参数的值为NULL，semtimedop()将永远睡眠等待。
+#### 返回说明
+成功执行时，两个系统调用都返回0。失败返回-1，errno被设为以下的某个值
+**E2BIG：一次对信号的操作数超出系统的限制
+**EACCES：调用进程没有权能执行请求的操作，并且不具有**CAP_IPC_OWNER**权能
+**EAGAIN**：信号操作暂时不能满足，需要重试
+**EFAULT**：sops或timeout指针指向的空间不可访问
+**EFBIG**：sem_num指定的值无效
+**EIDRM**：信号集已被移除
+**EINTR**：系统调用阻塞时，被信号中断
+**EINVAL**：参数无效
+**ENOMEM**：内存不足
+**ERANGE**：信号所允许的值越界
+
+### 9.3.14  __NR_shmget
+
+共享内存函数由shmget、shmat、shmdt、shmctl四个函数组成。
+
+shmget(得到一个共享内存标识符或创建一个共享内存对象)
+所需头文件
+```c
+#include <sys/ipc.h>
+#include <sys/shm.h>
+```
+#### 函数说明
+得到一个共享内存标识符或创建一个共享内存对象并返回共享内存标识符
+#### 函数原型
+```c
+int shmget(key_t key, size_t size, int shmflg)
+```
+####函数传入值
+key
+0(IPC_PRIVATE)：会建立新共享内存对象
+大于0的32位整数：视参数shmflg来确定操作。通常要求此值来源于ftok返回的IPC键值
+size
+大于0的整数：新建的共享内存大小，以字节为单位
+0：只获取共享内存时指定为0
+shmflg
+0：取共享内存标识符，若不存在则函数会报错
+IPC_CREAT：当shmflg&IPC_CREAT为真时，如果内核中不存在键值与key相等的共享内存，则新建一个共享内存；如果存在这样的共享内存，返回此共享内存的标识符
+IPC_CREAT|IPC_EXCL：如果内核中不存在键值与key相等的共享内存，则新建一个消息队列；如果存在这样的共享内存则报错
+#### 函数返回值
+成功：返回共享内存的标识符
+出错：-1，错误原因存于error中
+#### 附加说明
+上述shmflg参数为模式标志参数，使用时需要与IPC对象存取权限（如0600）进行|运算来确定信号量集的存取权限
+#### 错误代码
+EINVAL：参数size小于SHMMIN或大于SHMMAX
+EEXIST：预建立key所指的共享内存，但已经存在
+EIDRM：参数key所指的共享内存已经删除
+ENOSPC：超过了系统允许建立的共享内存的最大值(SHMALL)
+ENOENT：参数key所指的共享内存不存在，而参数shmflg未设IPC_CREAT位
+EACCES：没有权限
+ENOMEM：核心内存不足
+在ZGMOS环境中，对开始申请的共享内存空间进行了初始化，初始值为0x00。
+如果用shmget创建了一个新的消息队列对象时，则shmid_ds结构成员变量的值设置如下：
+Ÿ shm_lpid、shm_nattach、shm_atime、shm_dtime设置为0。
+Ÿ msg_ctime设置为当前时间。
+Ÿ shm_segsz设成创建共享内存的大小。
+Ÿ shmflg的读写权限放在shm_perm.mode中。
+Ÿ shm_perm结构的uid和cuid成员被设置成当前进程的有效用户ID，gid和cuid成员被设置成当前进程的有效组ID。
+
+### 9.3.15  __NR_shmctl
+
+shmctl(共享内存管理)
+#### 所需头文件
+```c
+#include <sys/types.h>
+#include <sys/shm.h>
+```
+#### 函数说明
+完成对共享内存的控制
+#### 函数原型
+```c
+int shmctl(int shmid, int cmd, struct shmid_ds *buf)
+```
+#### 函数传入值
+shmid
+#### 共享内存标识符
+cmd
+IPC_STAT：得到共享内存的状态，把共享内存的shmid_ds结构复制到buf中
+IPC_SET：改变共享内存的状态，把buf所指的shmid_ds结构中的uid、gid、mode复制到共享内存的shmid_ds结构内
+IPC_RMID：删除这片共享内存
+buf
+共享内存管理结构体。具体说明参见共享内存内核结构定义部分
+函数返回值
+成功：0
+出错：-1，错误原因存于error中
+错误代码
+EACCESS：参数cmd为IPC_STAT，确无权限读取该共享内存
+EFAULT：参数buf指向无效的内存地址
+EIDRM：标识符为shmid的共享内存已被删除
+EINVAL：无效的参数cmd或shmid
+EPERM：参数cmd为IPC_SET或IPC_RMID，却无足够的权限执行
+
+### 9.3.16  __NR_shmat
+
+shmat(把共享内存区对象映射到调用进程的地址空间)
+#### 所需头文件
+```c
+#include <sys/types.h>
+#include <sys/shm.h>
+```
+连接共享内存标识符为shmid的共享内存，连接成功后把共享内存区对象映射到调用进程的地址空间，随后可像本地空间一样访问
+#### 函数原型
+```c
+void *shmat(int shmid, const void *shmaddr, int shmflg)
+```
+#### 函数传入值
+msqid
+#### 共享内存标识符
+shmaddr
+指定共享内存出现在进程内存地址的什么位置，直接指定为NULL让内核自己决定一个合适的地址位置
+shmflg
+SHM_RDONLY：为只读模式，其他为读写模式
+函数返回值
+成功：附加好的共享内存地址
+出错：-1，错误原因存于error中
+#### 附加说明
+fork后子进程继承已连接的共享内存地址。exec后该子进程与已连接的共享内存地址自动脱离(detach)。进程结束后，已连接的共享内存地址会自动脱离(detach)
+#### 错误代码
+EACCES：无权限以指定方式连接共享内存
+EINVAL：无效的参数shmid或shmaddr
+ENOMEM：核心内存不足
+
+### 9.3.17  __NR_shmdt
+
+
+shmdt(断开共享内存连接)
+#### 所需头文件
+```c
+#include <sys/types.h>
+#include <sys/shm.h>
+```
+#### 函数说明
+与shmat函数相反，是用来断开与共享内存附加点的地址，禁止本进程访问此片共享内存
+#### 函数原型
+```c
+int shmdt(const void *shmaddr)
+```
+#### 函数传入值
+shmaddr：连接的共享内存的起始地址
+函数返回值
+成功：0
+出错：-1，错误原因存于error中
+附加说明
+本函数调用并不删除所指定的共享内存区，而只是将先前用shmat函数连接（attach）好的共享内存脱离（detach）目前的进程
+错误代码
+EINVAL：无效的参数shmaddr
+
+### 9.3.18  __NR_socket
+
+#### clone函数调用
+```c
+#include <sched.h>
+int clone(int (*fn)(void *fnarg), void *child_stack, int flags, void *arg, ...
+            /* pid_t *pid, struct user_desc *tls, pid_t *ctid */ );
+int __clone2(int (*fn)(void *),  void *child_stack_base,size_t stack_size, int flags, void *arg, ...
+                 /* pid_t *pid, struct user_desc *tls, pid_t *ctid */ );
+```
+指向子进程执行时调用的函数，fnarg是传给该函数的参数，child_stack是你为子进程分配的堆栈指针，flags通过将下表中的值相或得到，arg被传送给子函数，他的取值和用法完全有你决定，因为他为函数提供了上下文，用他从父进程向任何子进程传送数据，clone返回创建进程的进程ID，出错的话返回－1，设置errno，并不建立子进程。
+CLONE_VM                 若设置，父子进程运行在同一段内存
+CLONE_FS                 若设置，父子进程共享在root文件系统，当前工作目录以及umask信息
+CLONE_FILES            若设置，父子信息共享文件描述符
+CLONE_SIGHAND       若设置，父子进程共享在父进程上的信号处理器
+CLONE_PID                若设置，父子进程具有相同的PID
+
+
+### 9.3.19   __NR_dup
+
+该程序包括一个创建文件描述符拷贝的函数dup().在成功返回后，新的和原来的描述符可以交替使用,他们共享锁定、文件读写指针以及文件标志。例如，如果一个文件读写位置指针被其中一个描述符使用lseek()修改过之后，则对于另一个描述符来讲，文件读写指针也被改变。该函数使用数值最小的未使用描述符来建立新描述符.但是这两个描述符并不共享执行时关闭标志(close-on-exec).
+
+```c
+#define _LIBRARY_
+#include<unistd.h>
+ 
+/*
+*复制文件描述符函数
+*下面该调用宏函对应:int dup(int fd).直接调用了系统中断int 0x80
+*参数是_NR_dup,其中fd是文件描述符
+*/
+ 
+_syscall1(int,dup,int,fd);
+```
+
+### 9.3.20   __NR_futex 
+futex的解决思路是：在无竞争的情况下操作完全在user space进行，不需要系统调用，仅在发生竞争的时候进入内核去完成相应的处理(wait 或者 wake up)。所以说，futex是一种user mode和kernel mode混合的同步机制，需要两种模式合作才能完成，futex变量必须位于user space，而不是内核对象，futex的代码也分为user mode和kernel mode两部分，无竞争的情况下在user mode，发生竞争时则通过sys_futex系统调用进入kernel mode进行处理。
+
+####实现
+```c
+// 在uaddr指向的这个锁变量上挂起等待（仅当*uaddr==val时）
+int futex_wait(int *uaddr, int val);
+// 唤醒n个在uaddr指向的锁变量上挂起等待的进程
+int futex_wake(int *uaddr, int n);
+```
+```c
+/* 
+ * This sample show how to use futex betwen two process, and use system v  
+ * shared memory to store data 
+ */  
+  
+#include <unistd.h>  
+#include <stdio.h>  
+#include <stdlib.h>  
+#include <string.h>  
+#include <sys/ipc.h>  
+#include <sys/mman.h>  
+#include <sys/types.h>  
+#include <sys/syscall.h>  
+#include <sys/wait.h>  
+#include <sys/stat.h>  
+#include <fcntl.h>  
+#include <errno.h>  
+  
+#if __GLIBC_PREREQ(2, 3)      
+#if defined FUTEX_WAIT || defined FUTEX_WAKE   
+#include <linux/futex.h>  
+#else  
+#define FUTEX_WAIT      0  
+#define FUTEX_WAKE      1  
+#endif  
+  
+#ifndef __NR_futex  
+#define __NR_futex     202  
+#endif  
+#endif  
+  
+#define FILE_MODE (S_IRUSR | S_IWUSR)  
+  
+const char shmfile[] = "/tmp";  
+const int size = 100;  
+  
+struct namelist   
+{  
+    int  id;   
+    char name[20];  
+};  
+  
+int   
+main(void)  
+{  
+    int fd, pid, status;      
+    int *ptr;  
+    struct stat stat;  
+          
+    // create a Posix shared memory  
+    int flags = O_RDWR | O_CREAT;  
+    fd = shm_open(shmfile, flags, FILE_MODE);  
+    if (fd < 0)  
+    {  
+        printf("shm_open failed, errormsg=%s errno=%d", strerror(errno), errno);  
+        return 0;  
+    }  
+    ftruncate(fd, size);  
+    ptr = (int *)mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);     
+  
+    pid = fork();  
+    if (pid == 0) { // child process  
+        sleep(5);  
+        printf("Child %d: start/n", getpid());  
+          
+        fd = shm_open(shmfile, flags, FILE_MODE);  
+        fstat(fd, &stat);         
+        ptr = (int *)mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);     
+        close(fd);  
+        struct namelist tmp;  
+  
+        // store total num in ptr[0];  
+        *ptr = 3;  
+          
+        namelist *cur = (namelist *)(ptr+1);  
+  
+        // store items  
+        tmp.id = 1;  
+        strcpy(tmp.name, "Nellson");  
+        *cur++ = tmp;  
+        tmp.id = 2;  
+        strcpy(tmp.name, "Daisy");  
+        *cur++ = tmp;  
+        tmp.id = 3;  
+        strcpy(tmp.name, "Robbie");  
+        *cur++ = tmp;  
+  
+        printf("wake up parent/n");  
+        syscall(__NR_futex ,ptr, FUTEX_WAKE, 1, NULL );  
+  
+        exit(0);  
+    } else{ // parent process  
+        printf("parent start waiting/n");  
+        syscall(__NR_futex , ptr, FUTEX_WAIT, *(int *)ptr, NULL );  
+        printf("parent end waiting/n");  
+  
+        struct namelist tmp;  
+  
+        int total = *ptr;  
+        printf("/nThere is %d item in the shm/n", total);     
+          
+        ptr++;  
+        namelist *cur = (namelist *)ptr;  
+  
+        for (int i = 0; i< total; i++) {  
+            tmp = *cur;  
+            printf("%d: %s/n", tmp.id, tmp.name);  
+            cur++;  
+        }  
+  
+        printf("/n");  
+        waitpid(pid, &status, 0);  
+    }  
+  
+    // remvoe a Posix shared memory from system  
+    printf("Parent %d get child status:%d/n", getpid(), status);  
+    return 0;  
+}  
+```
+
+#### 互斥锁pthread_mutex_t的实现原理
+```c
+// pthread_mutex_lock:
+atomic_dec(pthread_mutex_t.value);
+if (pthread_mutex_t.value!=0)
+  futex(WAIT)
+else
+  success
+
+// pthread_mutex_unlock:
+atomic_inc(pthread_mutex_t.value);
+if(pthread_mutex_t.value!=1)
+futex(WAKEUP)
+else
+success
+```
+
+#### 信号量sem_t的实现原理
+
+```c
+sem_wait(sem_t *sem)
+{
+for (;;) {
+   if (atomic_decrement_if_positive(sem->count))
+       break;
+   futex_wait(&sem->count, 0)
+   }
+}
+
+sem_post(sem_t *sem)
+{
+   n = atomic_increment(sem->count);
+   // Pass the new value of sem->count
+   futex_wake(&sem->count, n + 1);
+}
+```
+
+### 9.3.21    __NR_shutdown
+shutdown命令用来系统关机命令。shutdown指令可以关闭所有程序，并依用户的需要，进行重新开机或关机的动作。
+
+#### 语法：
+shutdown(选项)(参数)
+
+
+#### 选项：
+-c：当执行“shutdown -h 11:50”指令时，只要按+键就可以中断关机的指令；
+
+-f：重新启动时不执行fsck；
+
+-F：重新启动时执行fsck；
+
+-h：将系统关机；
+
+-k：只是送出信息给所有用户，但不会实际关机；
+
+-n：不调用init程序进行关机，而由shutdown自己进行；
+
+-r：shutdown之后重新启动；
+
+-t<秒数>：送出警告信息和删除信息之间要延迟多少秒。
+
+
+####参数：
+[时间]：设置多久时间后执行shutdown指令；
+
+[警告信息]：要传送给所有登入用户的信息
+
+### 9.3.22   __NR_bind
+将一本地地址与一套接口捆绑。本函数适用于未连接的数据报或流类套接口，在connect()或listen()调用前使用。当用socket()创建套接口后，它便存在于一个名字空间（地址族）中，但并未赋名。bind()函数通过给一个未命名套接口分配一个本地名字来为套接口建立本地捆绑（主机地址/端口号）。
+
+```c
+#include <sys/types.h>
+#include <sys/socket.h>
+/****
+*  sockfd：标识一未捆绑套接口的描述字。
+*  my_addr：赋予套接口的地址。sockaddr结构定义如下：
+*  struct sockaddr{
+*    u_short sa_family;
+*    char sa_data[14];
+*  };
+*  addrlen：name名字的长度。
+*  返回值：成功返回0，失败返回-1.
+****/
+int bind( int sockfd , const struct sockaddr * my_addr, socklen_t addrlen);
+```
+参数列表中，sockfd 表示已经建立的socket编号（描述符）；
+my_addr 是一个指向sockaddr结构体类型的指针；
+参数addrlen表示my_addr结构的长度，可以用sizeof操作符获得。
+
+#### 用法
+在Internet地址族中，一个名字包括几个组成部分，对于SOCK_DGRAM和SOCK_STREAM类套接口，名字由三部分组成：主机地址，协议号（显式设置为UDP和TCP）和用以区分应用的端口号。如果一个应用并不关心分配给它的地址，则可将Internet地址设置为INADDR_ANY，或将端口号置为0。如果Internet地址段为INADDR_ANY，则可使用任意网络接口，且在有多种主机环境下可简化编程。如果端口号置为0，则Windows套接口实现将给应用程序分配一个值在1024到5000之间的唯一的端口。应用程序可在bind()后用getsockname()来获知所分配的地址，但必需注意的是，getsockname()只有在套接口连接成功后才会填写Internet地址，这是由于在多种主机环境下若干种Internet地址都是有效的。
+
+```c
+SOCKADDR_IN sin;
+SOCKET s;
+u_short alport = IPPORT_RESERVED;
+sin.sin_family = AF_INET;
+sin.sin_addr.s_addr = 0;
+for (;;) {
+  sin.sin_port=htons(alport);
+  if ( bind(s, (LPSOCKADDR)&sin, sizeof(sin)) == 0) {
+    /* it worked */
+  }
+  if (GetLastError() != WSAEADDRINUSE) {
+    /* fail */
+  }
+  alport-;
+  if (alport == IPPORT_RESERVED/2) {
+    /* fail－all unassigned reserved ports are */
+    /* in use. */
+  }
+}
+```
+
+#### 返回值
+如无错误发生，则bind()返回0。否则的话，将返回-1，应用程序可通过WSAGetLastError()获取相应错误代码。
+
+#### 错误代码
+
+**WSANOTINITIALISED**：在使用此API之前应首先成功地调用WSAStartup()。
+**WSAENETDOWN**：套接口实现检测到网络子系统失效。
+**WSAEADDRINUSE**：所定端口已在使用中（参见setoption()中的SO_REUSEADDR选项）。
+**WSAEFAULT**：namelen参数太小（小于sockaddr结构的大小）。
+**WSAEINPROGRESS**：一个阻塞的套接口调用正在运行中。
+**WSAEAFNOSUPPORT**：本协议不支持所指定的地址族。
+**WSAEINVAL**：该套接口已与一个地址捆绑。
+**WSAENOBUFS**：无足够可用缓冲区，连接过多。
+**WSAENOTSOCK**：描述字不是一个套接口。
+
+### 9.3.22   __NR_Listen
+
+  listen系统可以使一台主机上的一个tcp socket在某个端口号被动侦听，等待来自其它主机的tcp socket的连接请求，下面是listen系统调用的函数原型：
+
+ 
+```c
+#include int listen(int s, int backlog);
+```
+1）backlog是侦听队列的长度，在内核函数中，首先对backlog作检查，如果大于128，则强制使其等于128。
+
+2）接下来要检查结构体struct sock的成员sk_state，即当前socket的状态，如果不为TCP_LISTEN，则开始启动端口侦听。
+
+ 
+
+启动端口侦听首先要为结构体struct inet_connection_sock(它是struc sock的扩展，表示一个面向连接的socket)的成员icsk_accept_queue分配内存，icsk_accept_queue的类型是struct request_sock_queue，
+
+定义如下：
+```c
+struct request_sock_queue
+
+ {
+
+     struct request_sock *rskq_accept_head;
+
+     struct request_sock *rskq_accept_tail;
+
+     rwlock_t syn_wait_lock;
+
+     u8 rskq_defer_accept;
+
+     struct listen_sock *listen_opt;
+
+};
+```
+ 
+
+tcp socket在侦听的时候，那些来自其它主机的tcp socket的连接请求一旦被接受(完成三次握手协议)，便会建立一个request_sock，建立与请求socket之间的一个tcp连接。该request_sock会被放在一个先进先出的队列中，等待accept系统调用的处理。但上面的结构体中好像并没有可以存放request_sock的地方，
+
+下面是结构体struct listen_sock的定义：
+```c
+struct listen_sock
+
+{
+     u8 max_qlen_log;
+
+     int qlen;
+
+     int qlen_young;
+
+     int clock_hand;
+
+     u32 hash_rnd;
+
+     u32 nr_table_entries;
+
+     struct request_sock *syn_table[0];
+
+ };
+```
+ 
+新建立的request_sock就存放在syn_table中。这是一个哈希数组，总共有nr_table_entries项。实际上在分配内存时，分配的大小是TCP_SYNQ_HSIZE（512）项。成员nr_table_entries的值是512。成员max_qlen_log以2的对数的形式表示request_sock队列的最大值。哈希表有512项，但队列的最大值的取值是1024。即max_qlen_log的值为10。qlen是队列的当前长度。hash_rnd是一个随机数，计算哈希值用，结构体struct request_sock_queue中的rskq_accept_head和rskq_accept_tail分别指向request_sock队列的队列头和队列尾。 为struct inet_connection_sock分配完内存后，继续处理，结构体struct sock有两个成员sk_ack_backlog和sk_max_ack_backlog。sk_ack_backlog表示该侦听socket上，当前连向该socket，但是还没有完成三次握手协议的socket的数量，即还在连接过程中的socket的数量。初始值为0，sk_max_ack_backlog为该数量的最大值，也就是listen系统调用的第二个参数，即侦听队列的长度，它的真正含义是：侦听socket能处理的最大并发连接请求数，其最大取值为128。
+
+ 
+
+到这里，把socket的状态改为TCP_LISTEN，进入侦听状态。然后独占端口，使socket进入mytcp_hashinfo哈希表集中的listening_hash表。侦听建立完成。 由于侦听socket始终在系统中进行侦听工作，所以在进程结束时，还必须显式结束侦听，进行相应的清理工作。
+
+### 9.3.23   __NR_readahead
+
+readahead是系统API，是提示（hint）系统将指定文件的某区域预读进页缓存， 便于接下来对该区域进行读取时，不会因缺页（page fault）而阻塞。
+
+函数原型如下：
+```c
+#include <fcntl.h>
+ssize_t readahead(int fd, off64_t offset, size_t count);
+```
+readahead有以下特点： - readahead是阻塞的 - 因为是按页来读的，offset和offset+count会被合理地按页取整 - read系函数本身就有前向预读，所以只是前向使用readahead是没有多大意义的 - 不管使不使用readahead，缺页中断数都不会少，但是在复杂计算时，没有缺页打断计算，CPU流水会被充分利用
+
+### 9.3.24   __NR_chdir
+
+用于改变当前工作目录，其参数为Path 目标目录，可以是绝对目录或相对目录。
+
+**功 能**：更改当前工作目录。
+**参 数**：Path 目标目录，可以是绝对目录或相对目录。
+**返回值**：成功返回0 ，失败返回-1
+
+### 9.3.25   __NR_flock
+
+flock()会依参数operation所指定的方式对参数fd所指的文件做各种锁定或解除锁定的动作。此函数只能锁定整个文件，无法锁定文件的某一区域。
+
+```c
+#include<sys/file.h>
+int flock(int fd,int operation);
+```
+
+参数 operation有下列四种情况:
+**LOCK_SH** 建立共享锁定。多个进程可同时对同一个文件作共享锁定。
+**LOCK_EX** 建立互斥锁定。一个文件同时只有一个互斥锁定。
+**LOCK_UN** 解除文件锁定状态。
+**LOCK_NB** 无法建立锁定时，此操作可不被阻断，马上返回进程。通常与LOCK_SH或LOCK_EX 做OR(|)组合。
+单一文件无法同时建立共享锁定和互斥锁定，而当使用dup()或fork()时文件描述词不会继承此种锁定。
+返回值 返回0表示成功，若有错误则返回-1，错误代码存于errno。
